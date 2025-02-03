@@ -137,30 +137,38 @@ def dub_audio():
 def check_progress(dubbing_id):
     try:
         logger.info(f"Checking progress for dubbing ID: {dubbing_id}")
-        # Use get_dubbing_progress instead of get_dubbing_status
-        status = client.dubbing.get_dubbing_progress(dubbing_id)
+        # Get dubbing status
+        status = client.dubbing.get_status(dubbing_id)  # Changed to get_status
         logger.info(f"Status received: {status}")
         
-        if status.state == 'done':  # Changed from status.status to status.state
+        if status.state == 'done':
             logger.info(f"Dubbing completed for ID: {dubbing_id}")
             download = client.dubbing.get_dubbed_file(dubbing_id)
+            logger.info(f"Got download URL: {download.download_url}")
             
             # Download the file from ElevenLabs
             response = requests.get(download.download_url)
+            logger.info(f"Download response status: {response.status_code}")
+            
             if response.status_code == 200:
                 # Generate unique filename
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 s3_filename = f"dubbed_audio_{dubbing_id}_{timestamp}.mp3"
+                logger.info(f"Generated S3 filename: {s3_filename}")
                 
                 # Store in S3
                 if store_file_s3(response.content, s3_filename):
+                    logger.info(f"Successfully stored in S3: {s3_filename}")
                     # Generate presigned URL
                     download_url = generate_presigned_url(s3_filename)
+                    logger.info(f"Generated presigned URL: {download_url}")
                     return jsonify({
                         'status': 'completed',
                         'download_url': download_url,
                         'original_url': download.download_url
                     })
+                else:
+                    logger.error("Failed to store in S3")
             
             # Fallback to original URL
             return jsonify({
@@ -168,7 +176,7 @@ def check_progress(dubbing_id):
                 'download_url': download.download_url
             })
             
-        elif status.state == 'error':  # Changed from status.status to status.state
+        elif status.state == 'error':
             logger.error(f"Dubbing failed for ID: {dubbing_id}")
             return jsonify({
                 'status': 'failed',
