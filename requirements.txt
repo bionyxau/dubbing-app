@@ -1,0 +1,5 @@
+Flask==2.0.1
+flask-cors==4.0.0
+elevenlabs==0.2.24
+python-dotenv==0.19.0
+Werkzeug==2.0.1
