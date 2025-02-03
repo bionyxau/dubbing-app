@@ -137,11 +137,20 @@ def dub_audio():
 def check_progress(dubbing_id):
     try:
         logger.info(f"Checking progress for dubbing ID: {dubbing_id}")
-        # Get dubbing status
-        status = client.dubbing.get_status(dubbing_id)  # Changed to get_status
+        
+        # Use dubbing.get_status instead of get_dubbing_status
+        status = client.dubbing.status(dubbing_id)
         logger.info(f"Status received: {status}")
         
-        if status.state == 'done':
+        if hasattr(status, 'status'):
+            current_status = status.status
+        elif hasattr(status, 'state'):
+            current_status = status.state
+        else:
+            logger.error("Could not determine status attribute")
+            current_status = None
+
+        if current_status == 'done':
             logger.info(f"Dubbing completed for ID: {dubbing_id}")
             download = client.dubbing.get_dubbed_file(dubbing_id)
             logger.info(f"Got download URL: {download.download_url}")
@@ -176,17 +185,18 @@ def check_progress(dubbing_id):
                 'download_url': download.download_url
             })
             
-        elif status.state == 'error':
+        elif current_status == 'error':
             logger.error(f"Dubbing failed for ID: {dubbing_id}")
             return jsonify({
                 'status': 'failed',
                 'error': 'Dubbing failed'
             })
         else:
-            logger.info(f"Dubbing in progress for ID: {dubbing_id}, progress: {status.progress}")
+            progress = getattr(status, 'progress', 0)
+            logger.info(f"Dubbing in progress for ID: {dubbing_id}, progress: {progress}")
             return jsonify({
                 'status': 'processing',
-                'progress': status.progress
+                'progress': progress
             })
     except Exception as e:
         logger.error(f"Error checking progress: {str(e)}")
