@@ -134,29 +134,48 @@ def check_progress(dubbing_id):
     try:
         logger.info(f"Checking progress for dubbing ID: {dubbing_id}")
         status = client.dubbing.get_dubbing_status(dubbing_id)
+        logger.info(f"Status received: {status.status}, Progress: {status.progress}")
         
         if status.status == 'done':
             logger.info(f"Dubbing completed for ID: {dubbing_id}")
             download = client.dubbing.get_dubbed_file(dubbing_id)
+            logger.info(f"Got download URL from ElevenLabs: {download.download_url}")
             
             # Download the file from ElevenLabs
             response = requests.get(download.download_url)
+            logger.info(f"Download response status: {response.status_code}")
+            
             if response.status_code == 200:
                 # Generate unique filename
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 s3_filename = f"dubbed_audio_{dubbing_id}_{timestamp}.mp3"
+                logger.info(f"Generated S3 filename: {s3_filename}")
                 
-                # Store in S3
-                if store_file_s3(response.content, s3_filename):
-                    # Generate presigned URL
-                    download_url = generate_presigned_url(s3_filename)
+                try:
+                    # Store in S3
+                    if store_file_s3(response.content, s3_filename):
+                        logger.info(f"Successfully stored file in S3: {s3_filename}")
+                        # Generate presigned URL
+                        download_url = generate_presigned_url(s3_filename)
+                        logger.info(f"Generated presigned URL: {download_url}")
+                        return jsonify({
+                            'status': 'completed',
+                            'download_url': download_url,
+                            'original_url': download.download_url
+                        })
+                    else:
+                        logger.error("Failed to store file in S3")
+                except Exception as e:
+                    logger.error(f"Error during S3 operations: {str(e)}")
+                    # Fallback to original URL
                     return jsonify({
                         'status': 'completed',
-                        'download_url': download_url,
-                        'original_url': download.download_url
+                        'download_url': download.download_url
                     })
+            else:
+                logger.error(f"Failed to download file from ElevenLabs: {response.status_code}")
             
-            # Fallback to original URL if S3 storage fails
+            # Fallback to original URL
             return jsonify({
                 'status': 'completed',
                 'download_url': download.download_url
@@ -179,27 +198,6 @@ def check_progress(dubbing_id):
         return jsonify({
             'status': 'failed',
             'error': str(e)
-        }), 500
-
-@app.route('/generate-download-link/<filename>', methods=['GET'])
-def generate_download_link(filename):
-    try:
-        download_url = generate_presigned_url(filename)
-        if download_url:
-            return jsonify({
-                'status': 'success',
-                'download_url': download_url
-            })
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': 'Failed to generate download URL'
-            }), 500
-    except Exception as e:
-        logger.error(f"Error generating download link: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
         }), 500
 
 if __name__ == '__main__':
