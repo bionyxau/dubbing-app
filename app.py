@@ -22,7 +22,7 @@ app.config['CORS_HEADERS'] = 'Content-Type'
 @app.after_request
 def after_request(response):
     # Add your website to allowed origins
-    response.headers.add('Access-Control-Allow-Origin', 'http://www.bionyx.au')
+    response.headers.add('Access-Control-Allow-Origin', 'http://www.bionyx.au/dubbing')
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
     response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
     response.headers.add('Access-Control-Allow-Credentials', 'true')
