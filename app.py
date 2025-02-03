@@ -18,6 +18,7 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Credentials', 'true')
     return response
 
+# Folder settings
 UPLOAD_FOLDER = 'uploads'
 PROCESSED_FOLDER = 'processed'
 ALLOWED_EXTENSIONS = {'mp3', 'wav', 'mp4'}
@@ -50,6 +51,7 @@ def dub_audio():
         file.save(filepath)
         
         try:
+            # Open the uploaded file and send it to ElevenLabs for dubbing
             with open(filepath, 'rb') as audio_file:
                 response = client.dubbing.dub_a_video_or_an_audio_file(
                     file=(filename, audio_file, request.form.get('format', 'audio/mpeg')),
@@ -58,31 +60,42 @@ def dub_audio():
                     num_speakers=int(request.form.get('num_speakers', 1))
                 )
                 
-            # Save the processed file to the 'processed' folder
-            processed_filename = f"processed_{filename}"
-            processed_filepath = os.path.join(app.config['PROCESSED_FOLDER'], processed_filename)
-            
-            with open(processed_filepath, 'wb') as f:
-                f.write(response.audio_data)  # Assuming the response contains the processed audio data.
-            
-            # Generate a URL for the processed file
-            file_url = f"/download/{processed_filename}"
+            # Validate that the response contains audio data
+            if hasattr(response, 'audio_data') and response.audio_data:
+                # Save the processed file to the 'processed' folder
+                processed_filename = f"processed_{filename}"
+                processed_filepath = os.path.join(app.config['PROCESSED_FOLDER'], processed_filename)
+                
+                with open(processed_filepath, 'wb') as f:
+                    f.write(response.audio_data)  # Assuming the response contains the processed audio data.
+                
+                # Generate a URL for the processed file
+                file_url = f"/download/{processed_filename}"
 
-            return jsonify({
-                'dubbing_id': response.dubbing_id,
-                'status': 'processing',
-                'file_url': file_url
-            })
+                return jsonify({
+                    'dubbing_id': response.dubbing_id,
+                    'status': 'processing',
+                    'file_url': file_url
+                })
+            else:
+                return jsonify({'error': 'No audio data returned from dubbing service'}), 500
+
         except Exception as e:
             return jsonify({'error': str(e)}), 500
         finally:
+            # Remove the original file after processing
             os.remove(filepath)
             
     return jsonify({'error': 'Invalid file type'}), 400
 
 @app.route('/download/<filename>')
 def download_file(filename):
-    return send_from_directory(app.config['PROCESSED_FOLDER'], filename)
+    # Ensure the file exists before attempting to download it
+    file_path = os.path.join(app.config['PROCESSED_FOLDER'], filename)
+    if os.path.exists(file_path):
+        return send_from_directory(app.config['PROCESSED_FOLDER'], filename)
+    else:
+        return jsonify({'error': 'File not found'}), 404
 
 if __name__ == '__main__':
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
