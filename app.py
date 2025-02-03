@@ -7,20 +7,14 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 CORS(app)
 
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-# Rest of your existing code...
-
-
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'mp3', 'wav', 'mp4'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-ELEVENLABS_API_KEY = sk_f54ab3b3ee8672b1590d35ca9435f2154734869549b3e8f9
 
-client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+@app.route('/')
+def index():
+    return render_template('index.html')
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
