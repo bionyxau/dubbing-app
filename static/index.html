@@ -1,0 +1,68 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Audio Dubbing</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <div class="tts-container">
+        <div class="card">
+            <select id="sourceLanguage" class="voice-select">
+                <option value="detect">Detect Language</option>
+                <option value="en">English</option>
+                <option value="zh">Chinese</option>
+                <!-- Add other languages -->
+            </select>
+
+            <select id="targetLanguage" class="voice-select">
+                <option value="">Select Target Language</option>
+                <option value="en">English</option>
+                <option value="zh">Chinese</option>
+                <!-- Add other languages -->
+            </select>
+
+            <div class="upload-container">
+                <input type="file" id="audioFile" accept="audio/*,video/*" class="file-input">
+            </div>
+
+            <button id="dubButton" class="button">
+                Start Dubbing
+            </button>
+
+            <div id="audioContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        const dubButton = document.getElementById('dubButton');
+        
+        dubButton.addEventListener('click', async () => {
+            const file = document.getElementById('audioFile').files[0];
+            const sourceLanguage = document.getElementById('sourceLanguage').value;
+            const targetLanguage = document.getElementById('targetLanguage').value;
+
+            if (!file || !targetLanguage) {
+                alert('Please select a file and target language');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('source_language', sourceLanguage);
+            formData.append('target_language', targetLanguage);
+
+            try {
+                const response = await fetch('/dub', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                console.log(data);
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        });
+    </script>
+</body>
+</html>
