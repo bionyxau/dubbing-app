@@ -1,9 +1,13 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import logging
 from elevenlabs.client import ElevenLabs
 from werkzeug.utils import secure_filename
+import boto3
+from botocore.exceptions import ClientError
+import requests
+from datetime import datetime
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -27,12 +31,50 @@ UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'mp3', 'wav', 'mp4'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-ELEVENLABS_API_KEY = "sk_f54ab3b3ee8672b1590d35ca9435f2154734869549b3e8f9"
+ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY')
+
+# S3 Configuration
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=os.getenv('AWS_ACCESS_KEY'),
+    aws_secret_access_key=os.getenv('AWS_SECRET_KEY')
+)
+S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME')
 
 client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def store_file_s3(file_content, filename):
+    """Store the audio file in S3"""
+    try:
+        s3_client.put_object(
+            Bucket=S3_BUCKET_NAME,
+            Key=filename,
+            Body=file_content,
+            ContentType='audio/mpeg'
+        )
+        return True
+    except ClientError as e:
+        logger.error(f"Error storing file in S3: {e}")
+        return False
+
+def generate_presigned_url(filename, expiration=3600):
+    """Generate a presigned URL for file download"""
+    try:
+        url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={
+                'Bucket': S3_BUCKET_NAME,
+                'Key': filename
+            },
+            ExpiresIn=expiration
+        )
+        return url
+    except ClientError as e:
+        logger.error(f"Error generating presigned URL: {e}")
+        return None
 
 @app.route('/dub', methods=['POST'])
 def dub_audio():
@@ -96,10 +138,30 @@ def check_progress(dubbing_id):
         if status.status == 'done':
             logger.info(f"Dubbing completed for ID: {dubbing_id}")
             download = client.dubbing.get_dubbed_file(dubbing_id)
+            
+            # Download the file from ElevenLabs
+            response = requests.get(download.download_url)
+            if response.status_code == 200:
+                # Generate unique filename
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                s3_filename = f"dubbed_audio_{dubbing_id}_{timestamp}.mp3"
+                
+                # Store in S3
+                if store_file_s3(response.content, s3_filename):
+                    # Generate presigned URL
+                    download_url = generate_presigned_url(s3_filename)
+                    return jsonify({
+                        'status': 'completed',
+                        'download_url': download_url,
+                        'original_url': download.download_url
+                    })
+            
+            # Fallback to original URL if S3 storage fails
             return jsonify({
                 'status': 'completed',
                 'download_url': download.download_url
             })
+            
         elif status.status == 'error':
             logger.error(f"Dubbing failed for ID: {dubbing_id}")
             return jsonify({
@@ -117,6 +179,27 @@ def check_progress(dubbing_id):
         return jsonify({
             'status': 'failed',
             'error': str(e)
+        }), 500
+
+@app.route('/generate-download-link/<filename>', methods=['GET'])
+def generate_download_link(filename):
+    try:
+        download_url = generate_presigned_url(filename)
+        if download_url:
+            return jsonify({
+                'status': 'success',
+                'download_url': download_url
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to generate download URL'
+            }), 500
+    except Exception as e:
+        logger.error(f"Error generating download link: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
         }), 500
 
 if __name__ == '__main__':
