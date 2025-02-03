@@ -5,7 +5,18 @@ from elevenlabs.client import ElevenLabs
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*", "allow_headers": "*", "methods": ["GET", "POST", "OPTIONS"]}})
+
+# Updated CORS settings
+cors = CORS(app)
+app.config['CORS_HEADERS'] = 'Content-Type'
+
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', 'https://platinum-octahedron-wm3l.squarespace.com')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
 
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'mp3', 'wav', 'mp4'}
