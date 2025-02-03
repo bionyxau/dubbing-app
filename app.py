@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, send_from_directory
 from flask_cors import CORS
 import os
 from elevenlabs.client import ElevenLabs
@@ -19,9 +19,11 @@ def after_request(response):
     return response
 
 UPLOAD_FOLDER = 'uploads'
+PROCESSED_FOLDER = 'processed'
 ALLOWED_EXTENSIONS = {'mp3', 'wav', 'mp4'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['PROCESSED_FOLDER'] = PROCESSED_FOLDER
 ELEVENLABS_API_KEY = "sk_f54ab3b3ee8672b1590d35ca9435f2154734869549b3e8f9"
 
 client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
@@ -55,9 +57,21 @@ def dub_audio():
                     source_lang=request.form.get('source_language'),
                     num_speakers=int(request.form.get('num_speakers', 1))
                 )
+                
+            # Save the processed file to the 'processed' folder
+            processed_filename = f"processed_{filename}"
+            processed_filepath = os.path.join(app.config['PROCESSED_FOLDER'], processed_filename)
+            
+            with open(processed_filepath, 'wb') as f:
+                f.write(response.audio_data)  # Assuming the response contains the processed audio data.
+            
+            # Generate a URL for the processed file
+            file_url = f"/download/{processed_filename}"
+
             return jsonify({
                 'dubbing_id': response.dubbing_id,
-                'status': 'processing'
+                'status': 'processing',
+                'file_url': file_url
             })
         except Exception as e:
             return jsonify({'error': str(e)}), 500
@@ -66,6 +80,11 @@ def dub_audio():
             
     return jsonify({'error': 'Invalid file type'}), 400
 
+@app.route('/download/<filename>')
+def download_file(filename):
+    return send_from_directory(app.config['PROCESSED_FOLDER'], filename)
+
 if __name__ == '__main__':
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    os.makedirs(PROCESSED_FOLDER, exist_ok=True)
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
