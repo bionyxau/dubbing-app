@@ -5,12 +5,3 @@ Werkzeug==2.0.1
 elevenlabs
 boto3
 requests
-
-
-
-
-git add app.py requirements.txt
-
-git commit -m "Add S3 storage integration and update dependencies"
-
-git push origin main
