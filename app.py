@@ -5,12 +5,15 @@ from elevenlabs.client import ElevenLabs
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*", "allow_headers": "*", "methods": ["GET", "POST", "OPTIONS"]}})
 
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'mp3', 'wav', 'mp4'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+ELEVENLABS_API_KEY = "sk_f54ab3b3ee8672b1590d35ca9435f2154734869549b3e8f9"
+
+client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
 
 @app.route('/')
 def index():
@@ -54,4 +57,4 @@ def dub_audio():
 
 if __name__ == '__main__':
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-    app.run(port=5000)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
