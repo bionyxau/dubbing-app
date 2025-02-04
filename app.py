@@ -117,5 +117,6 @@ def check_progress(dubbing_id):
         'error': 'Failed to upload file to S3'
     }), 500
 
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000, debug=True)
+if __name__ == '__main__':
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
