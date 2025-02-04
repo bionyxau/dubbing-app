@@ -152,27 +152,18 @@ def check_progress(dubbing_id):
             "Accept": "application/json"
         }
         
-        api_url = urljoin(ELEVENLABS_API_BASE, f"/dubbing/{dubbing_id}")
-        response = requests.get(api_url, headers=headers)
+        # Using ElevenLabs client instead of direct API call
+        response = client.dubbing.get_dubbing_metadata(dubbing_id=dubbing_id)
+        logger.info(f"Status received: {response}")
         
-        if response.status_code != 200:
-            logger.error(f"Failed to fetch status: {response.status_code}")
-            return jsonify({
-                'status': 'failed',
-                'error': 'Failed to fetch status from Eleven Labs'
-            }), 500
-        
-        status_data = response.json()
-        logger.info(f"Status received: {status_data}")
-        
-        current_status = status_data.get('status', '')
-        
-        if current_status.lower() == 'done':
+        if response.status == 'done':
             logger.info(f"Dubbing completed for ID: {dubbing_id}")
             
-            # Get the dubbed audio from ElevenLabs
-            dubbed_url = urljoin(ELEVENLABS_API_BASE, f"/dubbing/{dubbing_id}/audio/{status_data.get('target_languages', [''])[0]}")
-            download_response = requests.get(dubbed_url, headers=headers)
+            # Get the dubbed audio using the client
+            download_response = requests.get(
+                f"{ELEVENLABS_API_BASE}/v1/dubbing/{dubbing_id}/audio/{response.target_languages[0]}",
+                headers=headers
+            )
             
             if download_response.status_code == 200:
                 # Generate unique filename with extension based on content type
@@ -207,15 +198,15 @@ def check_progress(dubbing_id):
                 'error': 'Failed to download dubbed file'
             }), 500
             
-        elif current_status.lower() == 'error':
+        elif response.status == 'error':
             return jsonify({
                 'status': 'failed',
-                'error': status_data.get('error', 'Dubbing failed')
+                'error': getattr(response, 'error', 'Dubbing failed')
             })
         else:
             return jsonify({
                 'status': 'processing',
-                'progress': status_data.get('progress', 0)
+                'progress': getattr(response, 'progress', 0)
             })
     
     except Exception as e:
