@@ -187,8 +187,8 @@ def check_progress(dubbing_id):
                 'error': 'Invalid response from ElevenLabs API'
             }), 500
 
-        if status_data['status'] == 'done':
-            logger.info("Dubbing status is done, proceeding to download")
+        if status_data['status'] == 'dubbed':  # Changed from 'done' to 'dubbed'
+            logger.info("Dubbing status is dubbed, proceeding to download")
             
             # Get the target language
             if not status_data.get('target_languages'):
