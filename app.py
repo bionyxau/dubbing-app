@@ -40,7 +40,7 @@ s3_client = boto3.client(
     aws_access_key_id=os.getenv('AWS_ACCESS_KEY'),
     aws_secret_access_key=os.getenv('AWS_SECRET_KEY')
 )
-S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME')
+S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME')  # This needs to be updated in your environment variables
 
 client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
 
@@ -50,14 +50,16 @@ def allowed_file(filename):
 def store_file_s3(file_content, filename):
     """Store the audio file in S3"""
     try:
-        logger.info(f"Attempting to store file in S3: {filename}")
+        # Upload file to 'Eleven-Labs' folder in the S3 bucket
+        s3_key = f"Eleven-Labs/{filename}"  # Include the folder path in the key
+        logger.info(f"Attempting to store file in S3: {s3_key}")
         s3_client.put_object(
             Bucket=S3_BUCKET_NAME,
-            Key=filename,
+            Key=s3_key,
             Body=file_content,
             ContentType='audio/mpeg'
         )
-        logger.info(f"Successfully stored file in S3: {filename}")
+        logger.info(f"Successfully stored file in S3: {s3_key}")
         return True
     except ClientError as e:
         logger.error(f"Error storing file in S3: {e}")
