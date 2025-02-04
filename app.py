@@ -177,14 +177,19 @@ def check_progress(dubbing_id):
             if download_response.status_code == 200:
                 # Generate unique filename with extension based on content type
                 content_type = download_response.headers.get('content-type', '')
+                logger.info(f"Content Type received: {content_type}")
+                
                 extension = 'mp4' if 'video' in content_type else 'mp3'
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 s3_filename = f"Eleven-Labs/dubbed_{dubbing_id}_{timestamp}.{extension}"
+                
+                logger.info(f"Attempting to store file in S3 with filename: {s3_filename}")
                 
                 # Store in S3
                 if store_file_s3(download_response.content, s3_filename):
                     download_url = generate_presigned_url(s3_filename)
                     if download_url:
+                        logger.info(f"Generated presigned URL: {download_url}")
                         return jsonify({
                             'status': 'completed',
                             'download_url': download_url
