@@ -146,27 +146,34 @@ def check_progress(dubbing_id):
     try:
         logger.info(f"Checking progress for dubbing ID: {dubbing_id}")
 
-        # Use the correct API endpoint with proper authentication
-        headers = {
-            "xi-api-key": ELEVENLABS_API_KEY,
-            "Accept": "application/json"
-        }
+        # Get dubbing status using correct endpoint
+        status_response = requests.get(
+            f"{ELEVENLABS_API_BASE}/dubbing/{dubbing_id}",
+            headers={
+                "xi-api-key": ELEVENLABS_API_KEY,
+                "Accept": "application/json"
+            }
+        )
         
-        # Using ElevenLabs client instead of direct API call
-        response = client.dubbing.get_dubbing_metadata(dubbing_id=dubbing_id)
-        logger.info(f"Status received: {response}")
+        if not status_response.ok:
+            raise Exception(f"Failed to get status: {status_response.text}")
+            
+        status_data = status_response.json()
+        logger.info(f"Status received: {status_data}")
         
-        if response.status == 'done':
+        if status_data.get('status') == 'done':
             logger.info(f"Dubbing completed for ID: {dubbing_id}")
             
-            # Get the dubbed audio using the client
+            # Get the dubbed audio using correct endpoint with language
+            target_lang = status_data.get('target_languages', [''])[0]  # Get first target language
             download_response = requests.get(
-                f"{ELEVENLABS_API_BASE}/v1/dubbing/{dubbing_id}/audio/{response.target_languages[0]}",
-                headers=headers
+                f"{ELEVENLABS_API_BASE}/dubbing/{dubbing_id}/audio/{target_lang}",
+                headers={
+                    "xi-api-key": ELEVENLABS_API_KEY
+                }
             )
             
             if download_response.status_code == 200:
-                # Generate unique filename with extension based on content type
                 content_type = download_response.headers.get('content-type', '')
                 logger.info(f"Content Type received: {content_type}")
                 
@@ -176,7 +183,6 @@ def check_progress(dubbing_id):
                 
                 logger.info(f"Attempting to store file in S3 with filename: {s3_filename}")
                 
-                # Store in S3
                 if store_file_s3(download_response.content, s3_filename):
                     download_url = generate_presigned_url(s3_filename)
                     if download_url:
@@ -198,15 +204,15 @@ def check_progress(dubbing_id):
                 'error': 'Failed to download dubbed file'
             }), 500
             
-        elif response.status == 'error':
+        elif status_data.get('status') == 'error':
             return jsonify({
                 'status': 'failed',
-                'error': getattr(response, 'error', 'Dubbing failed')
+                'error': status_data.get('error', 'Dubbing failed')
             })
         else:
             return jsonify({
                 'status': 'processing',
-                'progress': getattr(response, 'progress', 0)
+                'progress': status_data.get('progress', 0)
             })
     
     except Exception as e:
@@ -215,7 +221,6 @@ def check_progress(dubbing_id):
             'status': 'failed',
             'error': str(e)
         }), 500
-
 if __name__ == '__main__':
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
