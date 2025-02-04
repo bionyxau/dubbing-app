@@ -10,15 +10,24 @@ import requests
 from datetime import datetime
 from urllib.parse import urljoin
 
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
+# Set up logging with more detail
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Updated CORS settings
-cors = CORS(app)
-app.config['CORS_HEADERS'] = 'Content-Type'
+# Updated CORS configuration
+CORS(app, resources={
+    r"/*": {
+        "origins": ["https://www.bionyx.au"],
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
+    }
+})
 
 # Constants
 UPLOAD_FOLDER = 'uploads'
@@ -27,6 +36,7 @@ ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1"
 ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY')
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['CORS_HEADERS'] = 'Content-Type'
 
 # S3 Configuration
 s3_client = boto3.client(
@@ -39,34 +49,31 @@ S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME')
 # Initialize ElevenLabs client
 client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
 
-@app.after_request
-def after_request(response):
-    # Add your website to allowed origins
-    response.headers.add('Access-Control-Allow-Origin', 'https://www.bionyx.au')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
-    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    return response
-
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def store_file_s3(file_content, s3_key):
     """Store the file in S3"""
     try:
-        logger.info(f"Storing file in S3: {s3_key}")
-        content_type = 'video/mp4' if s3_key.endswith('.mp4') else 'audio/mpeg'
+        logger.info(f"Starting S3 upload for key: {s3_key}")
+        logger.info(f"Content length: {len(file_content)}")
         
-        s3_client.put_object(
+        content_type = 'video/mp4' if s3_key.endswith('.mp4') else 'audio/mpeg'
+        logger.info(f"Content type determined: {content_type}")
+        
+        response = s3_client.put_object(
             Bucket=S3_BUCKET_NAME,
             Key=s3_key,
             Body=file_content,
             ContentType=content_type
         )
-        logger.info(f"Successfully stored file in S3: {s3_key}")
+        logger.info(f"S3 upload response: {response}")
         return True
     except ClientError as e:
-        logger.error(f"Error storing file in S3: {e}")
+        logger.error(f"S3 ClientError: {str(e)}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error in S3 upload: {str(e)}")
         return False
 
 def generate_presigned_url(s3_key):
@@ -127,7 +134,7 @@ def dub_audio():
                         'status': 'processing'
                     })
             except Exception as e:
-                logger.error(f"Error during dubbing: {str(e)}")
+                logger.error(f"Error during dubbing: {str(e)}", exc_info=True)
                 return jsonify({'error': str(e)}), 500
             finally:
                 if os.path.exists(filepath):
@@ -138,7 +145,7 @@ def dub_audio():
         return jsonify({'error': 'Invalid file type'}), 400
         
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
+        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/check-progress/<dubbing_id>', methods=['GET'])
@@ -146,81 +153,112 @@ def check_progress(dubbing_id):
     try:
         logger.info(f"Checking progress for dubbing ID: {dubbing_id}")
 
-        # Get dubbing status using correct endpoint
+        # Get dubbing status
+        status_url = f"{ELEVENLABS_API_BASE}/dubbing/{dubbing_id}"
+        logger.info(f"Requesting status from: {status_url}")
+        
         status_response = requests.get(
-            f"{ELEVENLABS_API_BASE}/dubbing/{dubbing_id}",
+            status_url,
             headers={
                 "xi-api-key": ELEVENLABS_API_KEY,
                 "Accept": "application/json"
             }
         )
         
-        if not status_response.ok:
-            raise Exception(f"Failed to get status: {status_response.text}")
-            
-        status_data = status_response.json()
-        logger.info(f"Status received: {status_data}")
+        # Log the response for debugging
+        logger.info(f"Status response code: {status_response.status_code}")
+        logger.info(f"Status response headers: {dict(status_response.headers)}")
         
-        if status_data.get('status') == 'done':
-            logger.info(f"Dubbing completed for ID: {dubbing_id}")
-            
-            # Get the dubbed audio using correct endpoint with language
-            target_lang = status_data.get('target_languages', [''])[0]  # Get first target language
-            download_response = requests.get(
-                f"{ELEVENLABS_API_BASE}/dubbing/{dubbing_id}/audio/{target_lang}",
-                headers={
-                    "xi-api-key": ELEVENLABS_API_KEY
-                }
-            )
-            
-            if download_response.status_code == 200:
-                content_type = download_response.headers.get('content-type', '')
-                logger.info(f"Content Type received: {content_type}")
-                
-                extension = 'mp4' if 'video' in content_type else 'mp3'
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                s3_filename = f"Eleven-Labs/dubbed_{dubbing_id}_{timestamp}.{extension}"
-                
-                logger.info(f"Attempting to store file in S3 with filename: {s3_filename}")
-                
-                if store_file_s3(download_response.content, s3_filename):
-                    download_url = generate_presigned_url(s3_filename)
-                    if download_url:
-                        logger.info(f"Generated presigned URL: {download_url}")
-                        return jsonify({
-                            'status': 'completed',
-                            'download_url': download_url
-                        })
-                    
-                logger.error("Failed to generate download URL")
-                return jsonify({
-                    'status': 'failed',
-                    'error': 'Failed to generate download URL'
-                }), 500
-            
-            logger.error(f"Failed to download dubbed file: {download_response.status_code}")
+        if not status_response.ok:
+            logger.error(f"Error response from ElevenLabs: {status_response.text}")
             return jsonify({
                 'status': 'failed',
-                'error': 'Failed to download dubbed file'
+                'error': f"ElevenLabs API error: {status_response.text}"
             }), 500
             
-        elif status_data.get('status') == 'error':
+        status_data = status_response.json()
+        logger.info(f"Status data received: {status_data}")
+        
+        # Check if we have a valid status
+        if 'status' not in status_data:
+            logger.error(f"Invalid status data received: {status_data}")
+            return jsonify({
+                'status': 'failed',
+                'error': 'Invalid response from ElevenLabs API'
+            }), 500
+
+        if status_data['status'] == 'done':
+            logger.info("Dubbing status is done, proceeding to download")
+            
+            # Get the target language
+            if not status_data.get('target_languages'):
+                logger.error("No target languages found in response")
+                return jsonify({
+                    'status': 'failed',
+                    'error': 'No target language available'
+                }), 500
+                
+            target_lang = status_data['target_languages'][0]
+            
+            # Get the dubbed audio
+            download_url = f"{ELEVENLABS_API_BASE}/dubbing/{dubbing_id}/audio/{target_lang}"
+            logger.info(f"Attempting to download from: {download_url}")
+            
+            download_response = requests.get(
+                download_url,
+                headers={"xi-api-key": ELEVENLABS_API_KEY},
+                stream=True  # Stream the response to handle large files
+            )
+            
+            if download_response.status_code != 200:
+                logger.error(f"Download failed: {download_response.text}")
+                return jsonify({
+                    'status': 'failed',
+                    'error': 'Failed to download dubbed file'
+                }), 500
+
+            # Process the downloaded file
+            content_type = download_response.headers.get('content-type', '')
+            extension = 'mp4' if 'video' in content_type else 'mp3'
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            s3_filename = f"Eleven-Labs/dubbed_{dubbing_id}_{timestamp}.{extension}"
+            
+            logger.info(f"Uploading to S3: {s3_filename}")
+            
+            if store_file_s3(download_response.content, s3_filename):
+                download_url = generate_presigned_url(s3_filename)
+                if download_url:
+                    return jsonify({
+                        'status': 'completed',
+                        'download_url': download_url
+                    })
+                
+            logger.error("Failed to generate download URL")
+            return jsonify({
+                'status': 'failed',
+                'error': 'Failed to process dubbed file'
+            }), 500
+            
+        elif status_data['status'] == 'error':
+            logger.error(f"Dubbing error: {status_data.get('error', 'Unknown error')}")
             return jsonify({
                 'status': 'failed',
                 'error': status_data.get('error', 'Dubbing failed')
             })
         else:
+            # Processing or other status
             return jsonify({
                 'status': 'processing',
                 'progress': status_data.get('progress', 0)
             })
     
     except Exception as e:
-        logger.error(f"Error checking progress: {str(e)}")
+        logger.error(f"Unexpected error in check_progress: {str(e)}", exc_info=True)
         return jsonify({
             'status': 'failed',
-            'error': str(e)
+            'error': f"Server error: {str(e)}"
         }), 500
+
 if __name__ == '__main__':
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
