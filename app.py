@@ -129,9 +129,12 @@ def dub_audio():
                         num_speakers=int(request.form.get('num_speakers', 1))
                     )
                     logger.info(f"Dubbing initiated with ID: {response.dubbing_id}")
+                    
+                    # Store the original filename in the response
                     return jsonify({
                         'dubbing_id': response.dubbing_id,
-                        'status': 'processing'
+                        'status': 'processing',
+                        'original_filename': filename
                     })
             except Exception as e:
                 logger.error(f"Error during dubbing: {str(e)}", exc_info=True)
@@ -220,8 +223,14 @@ def check_progress(dubbing_id):
             # Process the downloaded file
             content_type = download_response.headers.get('content-type', '')
             extension = 'mp4' if 'video' in content_type else 'mp3'
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            s3_filename = f"Eleven-Labs/dubbed_{dubbing_id}_{timestamp}.{extension}"
+            
+            # Get the original filename from the status data
+            original_filename = status_data.get('original_filename', f'dubbed_{dubbing_id}')
+            # Remove the extension if present
+            original_filename = os.path.splitext(original_filename)[0]
+            
+            # Create new filename with target language
+            s3_filename = f"Eleven-Labs/{original_filename}_{target_lang}.{extension}"
             
             logger.info(f"Uploading to S3: {s3_filename}")
             
