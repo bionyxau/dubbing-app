@@ -222,17 +222,14 @@ def check_progress(dubbing_id):
             extension = 'mp4' if 'video' in content_type else 'mp3'
             
             # Get original filename from request (ensuring it exists)
-original_filename = request.args.get('original_filename', None)
+	original_filename = request.args.get('original_filename', None)
 
-if original_filename:
-    # Extract only the filename without the extension
-    original_name = os.path.splitext(original_filename)[0]
-else:
-    # Use default naming if original filename isn't provided
-    original_name = f'dubbed_{dubbing_id}'
+	if original_filename:
+   	 original_name = os.path.splitext(original_filename)[0]
+	else:
+    	original_name = f'dubbed_{dubbing_id}'
 
-# Construct the final filename with the target language and correct extension
-s3_filename = f"Eleven-Labs/{original_name}_{target_lang}.{extension}"
+	s3_filename = f"Eleven-Labs/{original_name}_{target_lang}.{extension}"
             
             logger.info(f"Uploading to S3: {s3_filename}")
             
