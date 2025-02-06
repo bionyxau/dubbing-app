@@ -60,18 +60,16 @@ def get_file_extension(filename):
     """Get the file extension from filename"""
     return filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
 
-def add_silence_to_audio(audio_file, silence_duration=750):
+def add_silence_to_audio(audio_file, silence_duration=750, trim_duration=250):
     """
-    Add silence to the beginning of an audio file
-    silence_duration: Duration of silence in milliseconds
+    1. Add silence to the beginning of an audio file
+    2. Trim the first portion to remove the click
     """
     try:
         # Read the audio file
         if audio_file.filename.lower().endswith('.mp4'):
-            # For MP4 files, extract audio
             audio = AudioSegment.from_file(audio_file, format="mp4")
         else:
-            # For other audio files
             audio = AudioSegment.from_file(audio_file)
 
         # Create silence segment
@@ -79,10 +77,13 @@ def add_silence_to_audio(audio_file, silence_duration=750):
         
         # Combine silence with original audio
         padded_audio = silence + audio
+        
+        # Trim the first trim_duration milliseconds of the entire file
+        final_audio = padded_audio[trim_duration:]
 
         # Export to temporary file
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.filename)[1])
-        padded_audio.export(temp_file.name, format=os.path.splitext(audio_file.filename)[1][1:])
+        final_audio.export(temp_file.name, format=os.path.splitext(audio_file.filename)[1][1:])
         
         return temp_file.name
     except Exception as e:
