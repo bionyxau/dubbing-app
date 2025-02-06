@@ -62,8 +62,10 @@ def get_file_extension(filename):
 
 def add_silence_to_audio(audio_file, silence_duration=750, trim_duration=250):
     """
-    1. Add silence to the beginning of an audio file
-    2. Trim the first portion to remove the click
+    1. First add silence padding
+    2. Save that as intermediate
+    3. Trim the start
+    4. Save final
     """
     try:
         # Read the audio file
@@ -72,20 +74,27 @@ def add_silence_to_audio(audio_file, silence_duration=750, trim_duration=250):
         else:
             audio = AudioSegment.from_file(audio_file)
 
-        # Create silence segment
+        # Step 1: Add silence padding
         silence = AudioSegment.silent(duration=silence_duration)
-        
-        # Combine silence with original audio
         padded_audio = silence + audio
         
-        # Trim the first trim_duration milliseconds of the entire file
-        final_audio = padded_audio[trim_duration:]
-
-        # Export to temporary file
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.filename)[1])
-        final_audio.export(temp_file.name, format=os.path.splitext(audio_file.filename)[1][1:])
+        # Step 2: Save intermediate file with padding
+        temp_padded = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.filename)[1])
+        padded_audio.export(temp_padded.name, format=os.path.splitext(audio_file.filename)[1][1:])
         
-        return temp_file.name
+        # Step 3: Load padded file and trim first 250ms
+        padded_file = AudioSegment.from_file(temp_padded.name)
+        final_audio = padded_file[trim_duration:]
+
+        # Step 4: Save final trimmed version
+        temp_final = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.filename)[1])
+        final_audio.export(temp_final.name, format=os.path.splitext(audio_file.filename)[1][1:])
+        
+        # Clean up intermediate file
+        if os.path.exists(temp_padded.name):
+            os.remove(temp_padded.name)
+            
+        return temp_final.name
     except Exception as e:
         logger.error(f"Error processing audio: {str(e)}")
         return None
