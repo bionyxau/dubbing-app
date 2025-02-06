@@ -224,14 +224,18 @@ def check_progress(dubbing_id):
             content_type = download_response.headers.get('content-type', '')
             extension = 'mp4' if 'video' in content_type else 'mp3'
             
-            # Get the original filename from the status data
-            original_filename = status_data.get('original_filename', f'dubbed_{dubbing_id}')
+            # Attempt to get original filename from request headers or query parameters
+            original_filename = request.args.get('original_filename', '')
+            if not original_filename:
+                original_filename = f'dubbed_{dubbing_id}'
+            
             # Remove the extension if present
             original_filename = os.path.splitext(original_filename)[0]
             
             # Create new filename with target language
             s3_filename = f"Eleven-Labs/{original_filename}_{target_lang}.{extension}"
             
+            logger.info(f"Using original filename: {original_filename} for S3 upload")
             logger.info(f"Uploading to S3: {s3_filename}")
             
             if store_file_s3(download_response.content, s3_filename):
