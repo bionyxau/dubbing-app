@@ -60,12 +60,10 @@ def get_file_extension(filename):
     """Get the file extension from filename"""
     return filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
 
-def add_silence_to_audio(audio_file, silence_duration=750, trim_duration=250):
+def add_silence_to_audio(audio_file, silence_duration=750):
     """
-    1. First add silence padding
-    2. Save that as intermediate
-    3. Trim the start
-    4. Save final
+    Add silence to the beginning of an audio file
+    silence_duration: Duration of silence in milliseconds
     """
     try:
         # Read the audio file
@@ -74,27 +72,17 @@ def add_silence_to_audio(audio_file, silence_duration=750, trim_duration=250):
         else:
             audio = AudioSegment.from_file(audio_file)
 
-        # Step 1: Add silence padding
+        # Create silence segment
         silence = AudioSegment.silent(duration=silence_duration)
+        
+        # Combine silence with original audio
         padded_audio = silence + audio
-        
-        # Step 2: Save intermediate file with padding
-        temp_padded = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.filename)[1])
-        padded_audio.export(temp_padded.name, format=os.path.splitext(audio_file.filename)[1][1:])
-        
-        # Step 3: Load padded file and trim first 250ms
-        padded_file = AudioSegment.from_file(temp_padded.name)
-        final_audio = padded_file[trim_duration:]
 
-        # Step 4: Save final trimmed version
-        temp_final = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.filename)[1])
-        final_audio.export(temp_final.name, format=os.path.splitext(audio_file.filename)[1][1:])
+        # Export to temporary file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.filename)[1])
+        padded_audio.export(temp_file.name, format=os.path.splitext(audio_file.filename)[1][1:])
         
-        # Clean up intermediate file
-        if os.path.exists(temp_padded.name):
-            os.remove(temp_padded.name)
-            
-        return temp_final.name
+        return temp_file.name
     except Exception as e:
         logger.error(f"Error processing audio: {str(e)}")
         return None
@@ -192,9 +180,6 @@ def dub_audio():
                         'status': 'processing',
                         'original_filename': original_filename
                     })
-            except Exception as e:
-                logger.error(f"Error during dubbing: {str(e)}", exc_info=True)
-                return jsonify({'error': str(e)}), 500
             finally:
                 # Clean up temporary files
                 if processed_filepath and os.path.exists(processed_filepath):
@@ -231,10 +216,6 @@ def check_progress(dubbing_id):
             }
         )
         
-        # Log the response for debugging
-        logger.info(f"Status response code: {status_response.status_code}")
-        logger.info(f"Status response headers: {dict(status_response.headers)}")
-        
         if not status_response.ok:
             logger.error(f"Error response from ElevenLabs: {status_response.text}")
             return jsonify({
@@ -245,7 +226,6 @@ def check_progress(dubbing_id):
         status_data = status_response.json()
         logger.info(f"Status data received: {status_data}")
         
-        # Check if we have a valid status
         if 'status' not in status_data:
             logger.error(f"Invalid status data received: {status_data}")
             return jsonify({
@@ -256,7 +236,6 @@ def check_progress(dubbing_id):
         if status_data['status'] == 'dubbed':
             logger.info("Dubbing status is dubbed, proceeding to download")
             
-            # Get the target language
             if not status_data.get('target_languages'):
                 logger.error("No target languages found in response")
                 return jsonify({
@@ -283,23 +262,37 @@ def check_progress(dubbing_id):
                     'error': 'Failed to download dubbed file'
                 }), 500
 
-            # Process the downloaded file
+            # Save the downloaded content to a temporary file
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+            temp_file.write(download_response.content)
+            temp_file.close()
+
+            # Load and trim the audio
+            audio = AudioSegment.from_file(temp_file.name)
+            trimmed_audio = audio[250:]  # Trim first 250ms
+
+            # Save trimmed audio to new temp file
+            trimmed_temp = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+            trimmed_audio.export(trimmed_temp.name, format='mp3')
+            
+            # Read the trimmed file for S3 upload
+            with open(trimmed_temp.name, 'rb') as f:
+                file_content = f.read()
+
+            # Process for S3 upload
             content_type = download_response.headers.get('content-type', '')
             extension = 'mp4' if 'video' in content_type else 'mp3'
-            
-            # Get the base filename without extension
             base_filename = os.path.splitext(original_filename)[0]
-            
-            # Create the new filename with target language
             new_filename = f"{base_filename}_{target_lang}.{extension}"
-            
-            # Construct S3 key
             s3_filename = f"Eleven-Labs/{dubbing_id}/{new_filename}"
             
-            logger.info(f"Uploading to S3: {s3_filename}")
-            
-            if store_file_s3(download_response.content, s3_filename, new_filename):
+            if store_file_s3(file_content, s3_filename, new_filename):
                 download_url = generate_presigned_url(s3_filename, new_filename)
+                
+                # Clean up temp files
+                os.remove(temp_file.name)
+                os.remove(trimmed_temp.name)
+                
                 if download_url:
                     return jsonify({
                         'status': 'completed',
