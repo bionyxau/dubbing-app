@@ -9,6 +9,9 @@ from botocore.exceptions import ClientError
 import requests
 from datetime import datetime
 from urllib.parse import urljoin
+from pydub import AudioSegment
+import io
+import tempfile
 
 # Set up logging with more detail
 logging.basicConfig(
@@ -56,6 +59,35 @@ def allowed_file(filename):
 def get_file_extension(filename):
     """Get the file extension from filename"""
     return filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
+
+def add_silence_to_audio(audio_file, silence_duration=100):
+    """
+    Add silence to the beginning of an audio file
+    silence_duration: Duration of silence in milliseconds
+    """
+    try:
+        # Read the audio file
+        if audio_file.filename.lower().endswith('.mp4'):
+            # For MP4 files, extract audio
+            audio = AudioSegment.from_file(audio_file, format="mp4")
+        else:
+            # For other audio files
+            audio = AudioSegment.from_file(audio_file)
+
+        # Create silence segment
+        silence = AudioSegment.silent(duration=silence_duration)
+        
+        # Combine silence with original audio
+        padded_audio = silence + audio
+
+        # Export to temporary file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.filename)[1])
+        padded_audio.export(temp_file.name, format=os.path.splitext(audio_file.filename)[1][1:])
+        
+        return temp_file.name
+    except Exception as e:
+        logger.error(f"Error processing audio: {str(e)}")
+        return None
 
 def store_file_s3(file_content, s3_key, original_filename):
     """Store the file in S3 with proper content type and filename"""
@@ -125,16 +157,17 @@ def dub_audio():
             
         if file and allowed_file(file.filename):
             original_filename = secure_filename(file.filename)
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], original_filename)
-            
-            # Ensure upload directory exists
-            os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-            
-            logger.info(f"Saving file to {filepath}")
-            file.save(filepath)
+            processed_filepath = None
             
             try:
-                with open(filepath, 'rb') as audio_file:
+                # Add silence to the audio
+                processed_filepath = add_silence_to_audio(file)
+                
+                if not processed_filepath:
+                    return jsonify({'error': 'Failed to process audio file'}), 500
+
+                # Open the processed file and send to ElevenLabs
+                with open(processed_filepath, 'rb') as audio_file:
                     logger.info("Starting dubbing process")
                     response = client.dubbing.dub_a_video_or_an_audio_file(
                         file=(original_filename, audio_file, request.form.get('format', 'audio/mpeg')),
@@ -153,9 +186,10 @@ def dub_audio():
                 logger.error(f"Error during dubbing: {str(e)}", exc_info=True)
                 return jsonify({'error': str(e)}), 500
             finally:
-                if os.path.exists(filepath):
-                    os.remove(filepath)
-                    logger.info(f"Cleaned up file: {filepath}")
+                # Clean up temporary files
+                if processed_filepath and os.path.exists(processed_filepath):
+                    os.remove(processed_filepath)
+                    logger.info(f"Cleaned up processed file: {processed_filepath}")
                 
         logger.error("Invalid file type")
         return jsonify({'error': 'Invalid file type'}), 400
