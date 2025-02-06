@@ -126,16 +126,12 @@ def dub_audio():
                         file=(filename, audio_file, request.form.get('format', 'audio/mpeg')),
                         target_lang=request.form.get('target_language'),
                         source_lang=request.form.get('source_language'),
-                        num_speakers=int(request.form.get('num_speakers', 1)),
-                        metadata={
-                            'original_file_name': filename
-                        }
+                        num_speakers=int(request.form.get('num_speakers', 1))
                     )
                     logger.info(f"Dubbing initiated with ID: {response.dubbing_id}")
                     return jsonify({
                         'dubbing_id': response.dubbing_id,
-                        'status': 'processing',
-                        'original_filename': filename  # Include original filename in response
+                        'status': 'processing'
                     })
             except Exception as e:
                 logger.error(f"Error during dubbing: {str(e)}", exc_info=True)
@@ -191,7 +187,7 @@ def check_progress(dubbing_id):
                 'error': 'Invalid response from ElevenLabs API'
             }), 500
 
-        if status_data['status'] == 'dubbed':
+        if status_data['status'] == 'dubbed':  # Changed from 'done' to 'dubbed'
             logger.info("Dubbing status is dubbed, proceeding to download")
             
             # Get the target language
@@ -211,7 +207,7 @@ def check_progress(dubbing_id):
             download_response = requests.get(
                 download_url,
                 headers={"xi-api-key": ELEVENLABS_API_KEY},
-                stream=True
+                stream=True  # Stream the response to handle large files
             )
             
             if download_response.status_code != 200:
@@ -224,12 +220,8 @@ def check_progress(dubbing_id):
             # Process the downloaded file
             content_type = download_response.headers.get('content-type', '')
             extension = 'mp4' if 'video' in content_type else 'mp3'
-            
-            # Get original filename from status data or use dubbing ID as fallback
-            original_filename = status_data.get('metadata', {}).get('original_file_name', f'dubbed_{dubbing_id}')
-            # Remove extension if present and add new extension with target language
-            original_filename = os.path.splitext(original_filename)[0]
-            s3_filename = f"Eleven-Labs/{original_filename}_{target_lang}.{extension}"
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            s3_filename = f"Eleven-Labs/dubbed_{dubbing_id}_{timestamp}.{extension}"
             
             logger.info(f"Uploading to S3: {s3_filename}")
             
