@@ -60,7 +60,7 @@ def get_file_extension(filename):
     """Get the file extension from filename"""
     return filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
 
-def add_silence_to_audio(audio_file, silence_duration=1000):
+def add_silence_to_audio(audio_file, silence_duration=750):
     """
     Add silence to the beginning of an audio file
     silence_duration: Duration of silence in milliseconds
