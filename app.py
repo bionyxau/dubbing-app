@@ -50,22 +50,36 @@ S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME')
 client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
 
 def allowed_file(filename):
+    """Check if the file extension is allowed"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def store_file_s3(file_content, s3_key):
-    """Store the file in S3"""
+def get_file_extension(filename):
+    """Get the file extension from filename"""
+    return filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
+
+def store_file_s3(file_content, s3_key, original_filename):
+    """Store the file in S3 with proper content type and filename"""
     try:
         logger.info(f"Starting S3 upload for key: {s3_key}")
         logger.info(f"Content length: {len(file_content)}")
         
-        content_type = 'video/mp4' if s3_key.endswith('.mp4') else 'audio/mpeg'
+        # Determine content type based on file extension
+        extension = get_file_extension(original_filename)
+        content_type = 'video/mp4' if extension == 'mp4' else 'audio/mpeg'
         logger.info(f"Content type determined: {content_type}")
+        
+        # Include original filename in metadata
+        metadata = {
+            'original-filename': original_filename
+        }
         
         response = s3_client.put_object(
             Bucket=S3_BUCKET_NAME,
             Key=s3_key,
             Body=file_content,
-            ContentType=content_type
+            ContentType=content_type,
+            Metadata=metadata,
+            ContentDisposition=f'attachment; filename="{original_filename}"'
         )
         logger.info(f"S3 upload response: {response}")
         return True
@@ -76,8 +90,8 @@ def store_file_s3(file_content, s3_key):
         logger.error(f"Unexpected error in S3 upload: {str(e)}")
         return False
 
-def generate_presigned_url(s3_key):
-    """Generate a presigned URL for file download"""
+def generate_presigned_url(s3_key, original_filename):
+    """Generate a presigned URL for file download with original filename"""
     try:
         logger.info(f"Generating presigned URL for: {s3_key}")
         url = s3_client.generate_presigned_url(
@@ -85,7 +99,7 @@ def generate_presigned_url(s3_key):
             Params={
                 'Bucket': S3_BUCKET_NAME,
                 'Key': s3_key,
-                'ResponseContentDisposition': 'attachment'
+                'ResponseContentDisposition': f'attachment; filename="{original_filename}"'
             },
             ExpiresIn=3600
         )
@@ -110,8 +124,8 @@ def dub_audio():
             return jsonify({'error': 'No file selected'}), 400
             
         if file and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            original_filename = secure_filename(file.filename)
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], original_filename)
             
             # Ensure upload directory exists
             os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -123,15 +137,17 @@ def dub_audio():
                 with open(filepath, 'rb') as audio_file:
                     logger.info("Starting dubbing process")
                     response = client.dubbing.dub_a_video_or_an_audio_file(
-                        file=(filename, audio_file, request.form.get('format', 'audio/mpeg')),
+                        file=(original_filename, audio_file, request.form.get('format', 'audio/mpeg')),
                         target_lang=request.form.get('target_language'),
                         source_lang=request.form.get('source_language'),
                         num_speakers=int(request.form.get('num_speakers', 1))
                     )
+                    
                     logger.info(f"Dubbing initiated with ID: {response.dubbing_id}")
                     return jsonify({
                         'dubbing_id': response.dubbing_id,
-                        'status': 'processing'
+                        'status': 'processing',
+                        'original_filename': original_filename
                     })
             except Exception as e:
                 logger.error(f"Error during dubbing: {str(e)}", exc_info=True)
@@ -152,7 +168,13 @@ def dub_audio():
 def check_progress(dubbing_id):
     try:
         logger.info(f"Checking progress for dubbing ID: {dubbing_id}")
-
+        
+        # Get original filename from query parameters
+        original_filename = request.args.get('original_filename')
+        if not original_filename:
+            logger.warning("No original filename provided in request")
+            original_filename = f"dubbed_{dubbing_id}"
+        
         # Get dubbing status
         status_url = f"{ELEVENLABS_API_BASE}/dubbing/{dubbing_id}"
         logger.info(f"Requesting status from: {status_url}")
@@ -187,7 +209,7 @@ def check_progress(dubbing_id):
                 'error': 'Invalid response from ElevenLabs API'
             }), 500
 
-        if status_data['status'] == 'dubbed':  # Changed from 'done' to 'dubbed'
+        if status_data['status'] == 'dubbed':
             logger.info("Dubbing status is dubbed, proceeding to download")
             
             # Get the target language
@@ -207,7 +229,7 @@ def check_progress(dubbing_id):
             download_response = requests.get(
                 download_url,
                 headers={"xi-api-key": ELEVENLABS_API_KEY},
-                stream=True  # Stream the response to handle large files
+                stream=True
             )
             
             if download_response.status_code != 200:
@@ -221,27 +243,24 @@ def check_progress(dubbing_id):
             content_type = download_response.headers.get('content-type', '')
             extension = 'mp4' if 'video' in content_type else 'mp3'
             
-            # Get original filename from request (ensuring it exists)
-            original_filename = request.args.get('original_filename', None)
-
-            if original_filename:
-                # Extract only the filename without the extension
-                original_name = os.path.splitext(original_filename)[0]
-            else:
-                # Use default naming if original filename isn't provided
-                original_name = f'dubbed_{dubbing_id}'
-
-            # Construct the final filename with the target language and correct extension
-            s3_filename = f"Eleven-Labs/{original_name}_{target_lang}.{extension}"
+            # Get the base filename without extension
+            base_filename = os.path.splitext(original_filename)[0]
+            
+            # Create the new filename with target language
+            new_filename = f"{base_filename}_{target_lang}.{extension}"
+            
+            # Construct S3 key
+            s3_filename = f"Eleven-Labs/{dubbing_id}/{new_filename}"
             
             logger.info(f"Uploading to S3: {s3_filename}")
             
-            if store_file_s3(download_response.content, s3_filename):
-                download_url = generate_presigned_url(s3_filename)
+            if store_file_s3(download_response.content, s3_filename, new_filename):
+                download_url = generate_presigned_url(s3_filename, new_filename)
                 if download_url:
                     return jsonify({
                         'status': 'completed',
-                        'download_url': download_url
+                        'download_url': download_url,
+                        'filename': new_filename
                     })
                 
             logger.error("Failed to generate download URL")
