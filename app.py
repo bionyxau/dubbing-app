@@ -220,8 +220,10 @@ def check_progress(dubbing_id):
             # Process the downloaded file
             content_type = download_response.headers.get('content-type', '')
             extension = 'mp4' if 'video' in content_type else 'mp3'
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            s3_filename = f"Eleven-Labs/dubbed_{dubbing_id}_{timestamp}.{extension}"
+            
+            # Get original filename without extension
+            original_name = os.path.splitext(request.args.get('original_filename', f'dubbed_{dubbing_id}'))[0]
+            s3_filename = f"Eleven-Labs/{original_name}_{target_lang}.{extension}"
             
             logger.info(f"Uploading to S3: {s3_filename}")
             
